@@ -1,0 +1,10 @@
+# attackSlope_dtw_test/docker-compose.yml
+version: '3.8'
+
+services:
+  attack_slope_dtw:
+    build: .
+    container_name: attack_slope_dtw_container
+    volumes:
+      - .:/app
+    command: python attackSlope_dtw.py

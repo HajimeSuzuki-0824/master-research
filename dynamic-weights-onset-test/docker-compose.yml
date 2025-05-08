@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  onset-detector:
+    build: .
+    dns:
+      - 8.8.8.8
+    volumes:
+      - ./sounds:/app/sounds
+      - ./outputs:/app/outputs
+    command: ["python", "weightsOnset.py"]

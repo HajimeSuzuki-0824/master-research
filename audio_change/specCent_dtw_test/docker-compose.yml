@@ -1,0 +1,10 @@
+# specCent_dtw_test/docker-compose.yml
+version: '3.8'
+
+services:
+  spec_cent_dtw:
+    build: .
+    container_name: spec_cent_dtw_container
+    volumes:
+      - .:/app
+    command: python specCent_dtw.py

@@ -1,0 +1,8 @@
+version: '3'
+services:
+  aligner:
+    build: .
+    volumes:
+      - ./output_images:/app/output_images
+      - ./sounds:/app/sounds
+    container_name: audio-aligner

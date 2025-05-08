@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  measure:
+    build: .
+    container_name: measure_container
+    volumes:
+      - ./sounds:/app/sounds
+      - ./png:/app/png
+    command: python main.py

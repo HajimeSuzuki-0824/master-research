@@ -1,0 +1,28 @@
+# Python関係
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints
+
+# Mac OS用
+.DS_Store
+
+# 仮想環境
+env/
+venv/
+.venv/
+
+# 出力ファイル（音声・画像・CSVなど）
+**/csv/
+**/sounds/
+**/outputs/
+**/output_images/
+**/png/
+
+# docker関係のビルドキャッシュ（念のため）
+*.log
+*.pid
+
+# VSCodeなどのIDE設定ファイル（不要な場合）
+.vscode/
