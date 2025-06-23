@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 filename = 'sounds/スケール1.wav'
 outputImage_path = 'png/test.png'
 
-def analyze_SpectralCent_plot(filename, outputImage_path):
+def analyze_SpectralCentroid_plot(filename, outputImage_path):
     """
     Spectral Centroidの計算を行い、プロットする
 

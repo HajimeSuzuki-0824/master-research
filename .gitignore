@@ -14,11 +14,9 @@ venv/
 .venv/
 
 # 出力ファイル（音声・画像・CSVなど）
-**/csv/
-**/sounds/
-**/outputs/
-**/output_images/
-**/png/
+*.png
+*.csv
+*.wav
 
 # docker関係のビルドキャッシュ（念のため）
 *.log
