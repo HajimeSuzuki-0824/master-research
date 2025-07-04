@@ -1,0 +1,10 @@
+# audio_change/docker-compose.yml
+version: '3.8'
+
+services:
+  audio_change:
+    build: .
+    container_name: audio_change_container
+    volumes:
+      - .:/app
+    command: python main.py

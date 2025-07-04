@@ -1,0 +1,6 @@
+pandas
+librosa>=0.10.0
+soundfile
+dtw-python
+scipy
+numpy

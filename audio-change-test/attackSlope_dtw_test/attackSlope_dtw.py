@@ -60,10 +60,7 @@ def apply_profiles(y, sr, onsets, offsets, mapped_profiles):
             y_mod[frame_start:frame_end] *= gain
     return y_mod
 
-def main():
-    A_name = "Ssax_1_smile"
-    B_name = "Ssax_1_daw"
-
+def main(A_name, B_name, out_path):
     onset_offset_df_a = pd.read_csv(f"csv/{A_name}.csv")
     onset_offset_df_b = pd.read_csv(f"csv/{B_name}.csv")
 
@@ -92,9 +89,11 @@ def main():
         mapped_profiles[bi] = profiles_a[ai]
 
     y_b_mod = apply_profiles(y_b, sr_b, onsets_b, offsets_b, mapped_profiles)
-    out_path = f"sounds/outputs/{B_name}_attackTrans_smile.wav"
     sf.write(out_path, y_b_mod, sr_b)
     print(f"[INFO] Saved to {out_path}")
 
 if __name__ == "__main__":
-    main()
+    A_name = "Ssax_1_smile"
+    B_name = "Ssax_1_daw"
+    out_path = f"sounds/outputs/{B_name}_attackTrans_smile.wav"
+    main(A_name, B_name)
