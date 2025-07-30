@@ -1,0 +1,12 @@
+services:
+  audio-processor:
+    build: .
+    container_name: audio-processor
+    environment:
+      - DAW_INSTRUMENT=Sax
+      - TARGET_FILE=Ssax_1_smile
+      - SONG_NUMBER=1
+    volumes:
+      - ./outputs:/app/outputs
+    working_dir: /app
+    command: python main.py

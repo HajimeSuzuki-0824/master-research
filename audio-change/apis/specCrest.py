@@ -25,8 +25,12 @@ def softmax_crest(S_mod: np.ndarray, beta: float = 10) -> float:
 def apply_spectral_crest_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, offsets: np.ndarray, mapped_profiles: Dict[int, np.ndarray], n_bands: int = 8) -> np.ndarray:
     y_mod = np.zeros_like(y)
 
+    # ターゲットのSpectral Crestを事前計算
+    target_crest = compute_spectral_crest(y, sr)
+    target_profiles = load.extract_profiles(target_crest, sr, onsets, offsets)
+
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
-        if i not in mapped_profiles:
+        if i not in mapped_profiles or i not in target_profiles:
             continue
 
         start_sample = int(onset * sr)
@@ -37,15 +41,15 @@ def apply_spectral_crest_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, of
         y_seg = y[start_sample:end_sample]
         if y_seg.ndim > 1:
             y_seg = np.mean(y_seg, axis=1)
-
         if len(y_seg) < 2048:
-            continue  # STFT不可
+            continue
 
-        profile = mapped_profiles[i]
+        source_profile = mapped_profiles[i]
+        target_profile = target_profiles[i]
         S = librosa.stft(y_seg, n_fft=2048, hop_length=load.HOP_LENGTH, dtype=np.complex64)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
 
-        # 自動帯域推定（平均スペクトルから上位90%）
+        # 帯域設定（前と同じ）
         mag_avg = np.mean(np.abs(S), axis=1)
         mag_cumsum = np.cumsum(np.sort(mag_avg)[::-1])
         mag_total = mag_cumsum[-1]
@@ -64,12 +68,20 @@ def apply_spectral_crest_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, of
         band_edges = np.logspace(log_min, log_max, n_bands + 1)
         band_edges[-1] = np.inf
 
-        stretched = load.stretch_profile(profile, S.shape[1])
+        # 相対変化パターンを計算
+        source_stretched = load.stretch_profile(source_profile, S.shape[1])
+        target_stretched = load.stretch_profile(target_profile, S.shape[1])
+        
+        source_mean = np.mean(source_stretched) + 1e-6
+        target_mean = np.mean(target_stretched) + 1e-6
 
         for t in range(S.shape[1]):
             S_t = np.abs(S[:, t])
             phase = np.angle(S[:, t])
-            SC_target = stretched[t]
+            
+            # 相対的な変化パターンから目標値を計算
+            source_ratio = source_stretched[t] / source_mean
+            SC_target = target_stretched[t] * source_ratio
 
             def loss(w):
                 weights = np.zeros_like(freqs)
@@ -84,12 +96,18 @@ def apply_spectral_crest_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, of
             result = scipy.optimize.minimize(
                 loss, x0=np.ones(n_bands),
                 method='L-BFGS-B',
-                bounds=[(0.5, 2)] * n_bands,
+                bounds=[(0.5, 1.0)] * n_bands,
                 options={'maxiter': 15}
             )
 
             if result.success:
                 w_opt = result.x
+                
+                # 重みが1.0を超えないように正規化
+                max_weight = np.max(w_opt)
+                if max_weight > 1.0:
+                    w_opt = w_opt / max_weight
+                
                 weights = np.zeros_like(freqs)
                 for b_idx in range(len(band_edges) - 1):
                     f_low = band_edges[b_idx]

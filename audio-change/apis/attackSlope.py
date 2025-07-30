@@ -13,29 +13,49 @@ def apply_attack_slope_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, offs
     frame_rate = sr / load.HOP_LENGTH
     y_mod = y.copy()
     
+    # ターゲットのAttack Slopeを事前計算
+    target_rms = librosa.feature.rms(y=y, frame_length=load.FRAME_LENGTH, hop_length=load.HOP_LENGTH)[0]
+    target_profiles = load.extract_profiles(target_rms, sr, onsets, offsets)
+    
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
-        if i not in mapped_profiles:
+        if i not in mapped_profiles or i not in target_profiles:
             continue
             
         start_frame = int(onset * frame_rate)
         end_frame = int(offset * frame_rate)
-        profile = mapped_profiles[i]
+        source_profile = mapped_profiles[i]
+        target_profile = target_profiles[i]
         n_frames = end_frame - start_frame
         
-        if n_frames <= 0:
+        if n_frames <= 0 or len(target_profile) == 0:
             continue
             
-        stretched = load.stretch_profile(profile, n_frames)
+        # ソースの相対変化率を計算
+        source_stretched = load.stretch_profile(source_profile, n_frames)
+        target_stretched = load.stretch_profile(target_profile, n_frames)
         
-        # Savitzky-Golayフィルタで平滑化
-        if len(stretched) >= 9:
-            stretched = savgol_filter(stretched, window_length=9, polyorder=2)
+        source_mean = np.mean(source_stretched) + 1e-6
+        target_mean = np.mean(target_stretched) + 1e-6
+        
+        if len(source_stretched) >= 9:
+            source_stretched = savgol_filter(source_stretched, window_length=9, polyorder=2)
             
-        max_val = np.max(stretched) + 1e-6
-        
+        # 全体の最大ゲインを事前計算して正規化
+        max_gain = 0.0
+        normalized_gains = []
         for j in range(n_frames):
-            gain = stretched[j] / max_val
-            gain = max(gain, 0.1)  # 最小ゲインを保証
+            source_ratio = source_stretched[j] / source_mean
+            target_value = target_stretched[j] * source_ratio
+            raw_gain = target_value / (target_stretched[j] + 1e-6)
+            normalized_gains.append(raw_gain)
+            max_gain = max(max_gain, raw_gain)
+
+        # 最大ゲインが1.0を超える場合は全体を正規化
+        if max_gain > 1.0:
+            normalized_gains = [g / max_gain for g in normalized_gains]
+
+        for j in range(n_frames):
+            gain = max(normalized_gains[j], 0.1)  # 最小値制限のみ
             
             frame_start = (start_frame + j) * load.HOP_LENGTH
             frame_end = frame_start + load.HOP_LENGTH

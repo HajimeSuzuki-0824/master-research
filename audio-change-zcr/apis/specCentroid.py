@@ -19,8 +19,12 @@ def compute_spectral_centroid(y: np.ndarray, sr: int, hop_length: int = load.HOP
 def apply_spectral_centroid_profiles(y: np.ndarray, sr: int, onsets: np.ndarray, offsets: np.ndarray, mapped_profiles: Dict[int, np.ndarray], n_bands: int = 8) -> np.ndarray:
     y_mod = np.zeros_like(y)
 
+    # ターゲットのSpectral Centroidを事前計算
+    target_centroid = compute_spectral_centroid(y, sr)
+    target_profiles = load.extract_profiles(target_centroid, sr, onsets, offsets)
+
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
-        if i not in mapped_profiles:
+        if i not in mapped_profiles or i not in target_profiles:
             continue
 
         start_sample = int(onset * sr)
@@ -34,11 +38,12 @@ def apply_spectral_centroid_profiles(y: np.ndarray, sr: int, onsets: np.ndarray,
         if len(y_seg) < 2048:
             continue
 
-        profile = mapped_profiles[i]
+        source_profile = mapped_profiles[i]
+        target_profile = target_profiles[i]
         S = librosa.stft(y_seg, n_fft=2048, hop_length=load.HOP_LENGTH, dtype=np.complex64)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
 
-        # 自動帯域推定（平均スペクトルから上位90%）
+        # 帯域設定
         mag_avg = np.mean(np.abs(S), axis=1)
         mag_cumsum = np.cumsum(np.sort(mag_avg)[::-1])
         mag_total = mag_cumsum[-1]
@@ -52,18 +57,25 @@ def apply_spectral_centroid_profiles(y: np.ndarray, sr: int, onsets: np.ndarray,
             
         f_min = max(freqs[valid_bins[0]], 1)
         f_max = freqs[valid_bins[-1]]
-
         log_min = np.log10(f_min)
         log_max = np.log10(f_max)
         band_edges = np.logspace(log_min, log_max, n_bands + 1)
         band_edges[-1] = np.inf
 
-        stretched = load.stretch_profile(profile, S.shape[1])
+        # 相対変化パターンを計算
+        source_stretched = load.stretch_profile(source_profile, S.shape[1])
+        target_stretched = load.stretch_profile(target_profile, S.shape[1])
+        
+        source_mean = np.mean(source_stretched) + 1e-6
+        target_mean = np.mean(target_stretched) + 1e-6
 
         for t in range(S.shape[1]):
             S_t = np.abs(S[:, t])
             phase = np.angle(S[:, t])
-            SC_target = stretched[t]
+            
+            # 相対的な変化パターンから目標値を計算
+            source_ratio = source_stretched[t] / source_mean
+            SC_target = target_stretched[t] * source_ratio
 
             def loss(w):
                 weights = np.zeros_like(freqs)
@@ -79,12 +91,18 @@ def apply_spectral_centroid_profiles(y: np.ndarray, sr: int, onsets: np.ndarray,
             result = scipy.optimize.minimize(
                 loss, x0=np.ones(n_bands),
                 method='L-BFGS-B',
-                bounds=[(0.5, 2)] * n_bands,
+                bounds=[(0.5, 1.0)] * n_bands,
                 options={'maxiter': 20}
             )
 
             if result.success:
                 w_opt = result.x
+                
+                # 重みが1.0を超えないように正規化
+                max_weight = np.max(w_opt)
+                if max_weight > 1.0:
+                    w_opt = w_opt / max_weight
+                
                 weights = np.zeros_like(freqs)
                 for b_idx in range(len(band_edges)-1):
                     f_min_band = band_edges[b_idx]
@@ -138,4 +156,108 @@ def api_transform_spectral_centroid(source_name: str, target_name: str, output_n
     
     output_path = f"{base_dir}/outputs/{output_name}"
     transform_spectral_centroid(source_name, target_name, output_path, base_dir)
+    return output_path
+
+
+def api_transform_spectral_centroid_direct(source_audio: np.ndarray, target_audio: np.ndarray, sr: int, output_path: str) -> str:
+    """DTWを使わないSpectral Centroid変換"""
+    
+    # ターゲットのSpectral Centroidを計算
+    target_centroid = compute_spectral_centroid(target_audio, sr)
+    target_centroid_mean = np.mean(target_centroid)
+    
+    # ソースのSpectral Centroidを計算
+    source_centroid = compute_spectral_centroid(source_audio, sr)
+    source_centroid_mean = np.mean(source_centroid)
+    
+    # 単一音なので、全体に対して変換を適用
+    y_mod = np.zeros_like(source_audio)
+    
+    # 音声全体をセグメントとして処理
+    y_seg = source_audio
+    if len(y_seg) < 2048:
+        # 短すぎる場合はゼロパディング
+        y_seg_padded = np.pad(y_seg, (0, 2048 - len(y_seg)), 'constant')
+        S = librosa.stft(y_seg_padded, n_fft=2048, hop_length=HOP_LENGTH, dtype=np.complex64)
+    else:
+        S = librosa.stft(y_seg, n_fft=2048, hop_length=HOP_LENGTH, dtype=np.complex64)
+    
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+    
+    # 帯域設定（既存と同じ）
+    mag_avg = np.mean(np.abs(S), axis=1)
+    mag_cumsum = np.cumsum(np.sort(mag_avg)[::-1])
+    mag_total = mag_cumsum[-1]
+    cutoff = 0.90 * mag_total
+    sorted_mag = np.sort(mag_avg)[::-1]
+    threshold = sorted_mag[np.searchsorted(mag_cumsum, cutoff)]
+    valid_bins = np.where(mag_avg >= threshold)[0]
+    
+    if len(valid_bins) == 0:
+        load.save_audio(source_audio, sr, output_path)
+        return output_path
+        
+    f_min = max(freqs[valid_bins[0]], 1)
+    f_max = freqs[valid_bins[-1]]
+    log_min = np.log10(f_min)
+    log_max = np.log10(f_max)
+    n_bands = 8
+    band_edges = np.logspace(log_min, log_max, n_bands + 1)
+    band_edges[-1] = np.inf
+
+    # 目標Centroid値（一定値）
+    SC_target = target_centroid_mean
+
+    for t in range(S.shape[1]):
+        S_t = np.abs(S[:, t])
+        phase = np.angle(S[:, t])
+
+        def loss(w):
+            weights = np.zeros_like(freqs)
+            for b_idx in range(len(band_edges)-1):
+                f_min_band = band_edges[b_idx]
+                f_max_band = band_edges[b_idx+1]
+                weights += w[b_idx] * ((freqs >= f_min_band) & (freqs < f_max_band))
+
+            S_mod = S_t * weights
+            SC = np.sum(freqs * S_mod) / (np.sum(S_mod) + 1e-6)
+            return (SC - SC_target) ** 2 + 0.001 * np.sum((w - 1) ** 2)
+
+        result = scipy.optimize.minimize(
+            loss, x0=np.ones(n_bands),
+            method='L-BFGS-B',
+            bounds=[(0.5, 1.0)] * n_bands,
+            options={'maxiter': 20}
+        )
+
+        if result.success:
+            w_opt = result.x
+            
+            # 重みが1.0を超えないように正規化
+            max_weight = np.max(w_opt)
+            if max_weight > 1.0:
+                w_opt = w_opt / max_weight
+            
+            weights = np.zeros_like(freqs)
+            for b_idx in range(len(band_edges)-1):
+                f_min_band = band_edges[b_idx]
+                f_max_band = band_edges[b_idx+1]
+                weights += w_opt[b_idx] * ((freqs >= f_min_band) & (freqs < f_max_band))
+
+            S[:, t] = (S_t * weights) * np.exp(1j * phase)
+            del result
+            gc.collect()
+
+    y_seg_mod = librosa.istft(S, hop_length=HOP_LENGTH, length=len(y_seg))
+    
+    # 元の長さに調整
+    if len(y_seg_mod) > len(source_audio):
+        y_seg_mod = y_seg_mod[:len(source_audio)]
+    elif len(y_seg_mod) < len(source_audio):
+        y_seg_mod = np.pad(y_seg_mod, (0, len(source_audio) - len(y_seg_mod)), 'constant')
+    
+    y_mod = y_seg_mod
+
+    # 保存
+    load.save_audio(y_mod, sr, output_path)
     return output_path
