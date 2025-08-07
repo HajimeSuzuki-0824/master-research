@@ -4,7 +4,7 @@ services:
     container_name: audio-processor
     environment:
       - DAW_INSTRUMENT=Sax
-      - TARGET_FILE=Ssax_1_smile
+      - TARGET_FILE=Ssax_1_sad
       - SONG_NUMBER=1
     volumes:
       - ./outputs:/app/outputs

@@ -13,9 +13,43 @@ def compute_spectral_centroid(y: np.ndarray, sr: int, hop_length: int = load.HOP
     centroid = numerator / denominator
     return centroid
 
+def normalize_note_regions(feature_seq: np.ndarray, sr: int, onsets: np.ndarray, offsets: np.ndarray, hop_length: int = load.HOP_LENGTH) -> np.ndarray:
+    """音符部分のみをMin-Max正規化"""
+    frame_rate = sr / hop_length
+    note_values = []
+    
+    # 音符部分の値を収集
+    for onset, offset in zip(onsets, offsets):
+        start = int(onset * frame_rate)
+        end = int(offset * frame_rate)
+        if end <= len(feature_seq):
+            note_values.extend(feature_seq[start:end])
+    
+    if len(note_values) == 0:
+        return feature_seq
+    
+    # Min-Max正規化のパラメータを計算
+    min_val = np.min(note_values)
+    max_val = np.max(note_values)
+    
+    if max_val - min_val == 0:
+        return feature_seq
+    
+    # 正規化された特徴量配列を作成
+    normalized_seq = feature_seq.copy()
+    
+    # 音符部分のみを正規化
+    for onset, offset in zip(onsets, offsets):
+        start = int(onset * frame_rate)
+        end = int(offset * frame_rate)
+        if end <= len(feature_seq):
+            normalized_seq[start:end] = (feature_seq[start:end] - min_val) / (max_val - min_val)
+    
+    return normalized_seq
+
 def apply_spectral_centroid_transformation_note_wise(source_audio: np.ndarray, target_profiles: Dict[int, np.ndarray],
                                                    note_index: int, sr: int, n_bands: int = 8) -> np.ndarray:
-    """音符単位でのSpectral Centroid変換（旧システムベース）"""
+    """音符単位でのSpectral Centroid変換（正規化済みプロファイル対応）"""
     if note_index not in target_profiles:
         return source_audio
     
@@ -54,15 +88,22 @@ def apply_spectral_centroid_transformation_note_wise(source_audio: np.ndarray, t
     target_profile = target_profiles[note_index]
     target_stretched = load.stretch_profile(target_profile, S.shape[1])
     
-    # 相対変化パターンを計算
-    target_mean = np.mean(target_stretched) + 1e-6
+    # 正規化済みのプロファイルを使用
+    # ターゲットプロファイルは既に0-1に正規化済みなので、適切なスケールに変換
+    source_centroid = compute_spectral_centroid(y_seg, sr)
+    source_mean = np.mean(source_centroid) + 1e-6
+    
+    # 正規化済みプロファイルを実際の周波数範囲にスケール
+    centroid_range = np.max(source_centroid) - np.min(source_centroid)
+    centroid_min = np.min(source_centroid)
+    scaled_target = target_stretched * centroid_range + centroid_min
 
     for t in range(S.shape[1]):
         S_t = np.abs(S[:, t])
         phase = np.angle(S[:, t])
         
-        # 目標のスペクトル重心（ターゲットプロファイルから）
-        SC_target = target_stretched[t]
+        # 目標のスペクトル重心（スケール済みターゲットプロファイルから）
+        SC_target = scaled_target[t]
 
         def loss(w):
             weights = np.zeros_like(freqs)
@@ -111,13 +152,19 @@ def apply_spectral_centroid_transformation_note_wise(source_audio: np.ndarray, t
     return y_seg_mod
 
 def get_target_centroid_profiles(target_name: str, base_dir: str = ".") -> Dict[int, np.ndarray]:
-    """ターゲット音声からSpectral Centroidプロファイルを抽出"""
+    """ターゲット音声からSpectral Centroidプロファイルを抽出（正規化対応）"""
     target_data = load.load_data_with_suffix(target_name, "spectral", base_dir)
     target_centroid = compute_spectral_centroid(target_data["y"], target_data["sr"])
     
-    # 音符単位でプロファイルを抽出
-    profiles = load.extract_profiles(
+    # 音符部分のみを正規化
+    normalized_centroid = normalize_note_regions(
         target_centroid, target_data["sr"], 
+        target_data["onsets"], target_data["offsets"]
+    )
+    
+    # 正規化された特徴量から音符単位でプロファイルを抽出
+    profiles = load.extract_profiles(
+        normalized_centroid, target_data["sr"], 
         target_data["onsets"], target_data["offsets"]
     )
     

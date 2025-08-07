@@ -480,7 +480,7 @@ class AudioProcessor:
 
 def main():
     daw_instrument = os.getenv('DAW_INSTRUMENT', 'Sax')
-    target_file = os.getenv('TARGET_FILE', 'Ssax_1_smile')
+    target_file = os.getenv('TARGET_FILE', 'Ssax_1_sad')
     song_number = os.getenv('SONG_NUMBER', '1')
     
     print("=== 音響特徴量変換システム（音符単位変換版） ===")
