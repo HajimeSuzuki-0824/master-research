@@ -9,6 +9,7 @@ import gc
 import tempfile
 import shutil
 from typing import List, Optional, Dict
+import re
 
 from apis import load, rms, specCentroid, specCrest
 
@@ -18,7 +19,11 @@ class AudioProcessor:
         self.target_file = target_file
         self.song_number = song_number
         
-        self.daw_sounds_dir = Path(f"daw_sounds/{daw_instrument}")
+        instrument_alias_for_daw = {
+            "Euph" : "Trombone",
+        }
+        self.daw_sounds_instrument = instrument_alias_for_daw.get(daw_instrument, daw_instrument)
+        self.daw_sounds_dir = Path(f"daw_sounds/{self.daw_sounds_instrument}")
         self.inputs_dir = Path("inputs")
         self.sheet_dir = Path("sheet")
         self.outputs_dir = Path("outputs")
@@ -383,7 +388,21 @@ class AudioProcessor:
             reference_note_index = 0  # 参考音源の音符インデックス（休符をスキップ）
             
             for idx, row in sheet_data.iterrows():
-                pitch_name = row['PitchName']
+                # --- 楽器によるオクターブ補正（Horn / Tb / Euph は 1 オクターブ下げる）---
+                if self.daw_instrument in {"Horn", "Tb", "Euph"} and isinstance(pitch_name, str):
+                    pn = pitch_name.strip()
+                    if pn.lower() != 'rest':
+                        # 末尾の数字（例: C#4 の "4"）を正規表現で取得
+                        m = re.search(r"(.*?)(-?\d+)$", pn.replace('♭','b').replace('♯','#'))
+                        if m:
+                            note_part, octv = m.group(1), m.group(2)
+                            try:
+                                new_oct = int(octv) - 1
+                                pitch_name = f"{note_part}{new_oct}"
+                                print(f"  楽器補正: {self.daw_instrument} のため {pn} -> {pitch_name} (1オクターブ下げ)")
+                            except ValueError:
+                                # 数字に変換できない場合は変更せず
+                                pass
                 length = row['length']
                 duration = length * quarter_note_duration
                 
