@@ -20,7 +20,7 @@ class AudioProcessor:
         self.song_number = song_number
         
         instrument_alias_for_daw = {
-            "Euph" : "Trombone",
+            "Euph" : "Tb",
         }
         self.daw_sounds_instrument = instrument_alias_for_daw.get(daw_instrument, daw_instrument)
         self.daw_sounds_dir = Path(f"daw_sounds/{self.daw_sounds_instrument}")
@@ -388,12 +388,24 @@ class AudioProcessor:
             reference_note_index = 0  # 参考音源の音符インデックス（休符をスキップ）
             
             for idx, row in sheet_data.iterrows():
-                # --- 楽器によるオクターブ補正（Horn / Tb / Euph は 1 オクターブ下げる）---
-                if self.daw_instrument in {"Horn", "Tb", "Euph"} and isinstance(pitch_name, str):
-                    pn = pitch_name.strip()
+                # まず pitch_name を必ず決める（欠損は rest 扱い）
+                raw_pn = row['PitchName'] if 'PitchName' in row.index else None
+                if pd.isna(raw_pn):
+                    pitch_name = 'rest'
+                else:
+                    pitch_name = str(raw_pn).strip()
+
+                # 音価なども先に取得
+                length = row['length']
+                duration = length * quarter_note_duration
+
+                # --- 楽器によるオクターブ補正（Hr / Tb / Euph は 1 オクターブ下げる）---
+                if self.daw_instrument in {"Hr", "Tb", "Euph"} and isinstance(pitch_name, str):
+                    pn = pitch_name
                     if pn.lower() != 'rest':
-                        # 末尾の数字（例: C#4 の "4"）を正規表現で取得
-                        m = re.search(r"(.*?)(-?\d+)$", pn.replace('♭','b').replace('♯','#'))
+                        # 末尾の数字（例: C#4 の "4"）を正規表現で取得（全角♭/♯も事前に半角へ）
+                        norm = pn.replace('♭', 'b').replace('♯', '#')
+                        m = re.search(r"(.*?)(-?\d+)$", norm)
                         if m:
                             note_part, octv = m.group(1), m.group(2)
                             try:
@@ -401,24 +413,23 @@ class AudioProcessor:
                                 pitch_name = f"{note_part}{new_oct}"
                                 print(f"  楽器補正: {self.daw_instrument} のため {pn} -> {pitch_name} (1オクターブ下げ)")
                             except ValueError:
-                                # 数字に変換できない場合は変更せず
+                                # 数字に変換できない場合は変更しない
                                 pass
-                length = row['length']
-                duration = length * quarter_note_duration
-                
+
                 processed_notes += 1
                 print(f"\n音 {idx + 1}/{total_notes}: {pitch_name}, 長さ: {length} ({duration:.3f}秒)")
                 print(f"進捗: {processed_notes}/{total_notes} ({processed_notes/total_notes*100:.1f}%)")
-                
+
                 if processed_notes > 1:
                     avg_time_per_note = (time.time() - start_time) / (processed_notes - 1)
                     remaining_notes = total_notes - processed_notes
                     estimated_remaining = avg_time_per_note * remaining_notes
                     print(f"推定残り時間: {estimated_remaining/60:.1f}分")
-                
+
                 # 一時ファイルパス
                 temp_file = self.temp_dir / f"note_{idx:03d}.wav"
-                
+
+                # 休符処理（ここで必ず文字列として比較できる）
                 if pitch_name.lower() == 'rest':
                     if current_sr is None:
                         current_sr = 44100
